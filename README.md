@@ -1,5 +1,12 @@
 # pushtalk
 
+[![Stars](https://img.shields.io/github/stars/santhoshkammari/pushtalk?style=social)](https://github.com/santhoshkammari/pushtalk/stargazers)
+[![Watchers](https://img.shields.io/github/watchers/santhoshkammari/pushtalk?style=social)](https://github.com/santhoshkammari/pushtalk/watchers)
+[![Forks](https://img.shields.io/github/forks/santhoshkammari/pushtalk?style=social)](https://github.com/santhoshkammari/pushtalk/network/members)
+[![License: MIT](https://img.shields.io/github/license/santhoshkammari/pushtalk)](LICENSE)
+[![Last commit](https://img.shields.io/github/last-commit/santhoshkammari/pushtalk)](https://github.com/santhoshkammari/pushtalk/commits/main)
+[![Issues](https://img.shields.io/github/issues/santhoshkammari/pushtalk)](https://github.com/santhoshkammari/pushtalk/issues)
+
 **Push-to-talk voice control for AI coding agents.** Hold a key, speak, release. Your speech is transcribed offline on CPU, sent to an LLM agent, and the answer streams into a translucent always-on-top HUD, optionally spoken back with Kokoro TTS.
 
 No cloud speech API. No chat window. Works with any OpenAI-compatible endpoint (vLLM, llama.cpp, Ollama) or an [OpenChamber](https://github.com/openchamber/openchamber) agent session.
@@ -130,6 +137,10 @@ gsettings set org.gnome.settings-daemon.plugins.media-keys custom-keybindings "[
 | `live_parakeet.py` | standalone live rolling-window transcription (sherpa-onnx Parakeet) |
 | `kokoro_tts.py` | standalone batch TTS test rig |
 | `run.sh` / `toggle.sh` | launcher and global-shortcut wrapper |
+
+## Support
+
+If pushtalk is useful to you, a **star** on GitHub helps other people find it. **Watch** the repo to get release news, and open an issue if something breaks.
 
 ## License
 
