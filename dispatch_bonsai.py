@@ -29,12 +29,6 @@ from openai import OpenAI
 DEFAULT_BASE_URL = os.environ.get("LIVE_ASR_BASE_URL", "http://localhost:11434/v1")
 DEFAULT_MODEL = "eslider/bonsai-1.7b:latest"
 
-INTERRUPT_NOTE = (
-    "<interrupted>The user pressed the talk key and started speaking again "
-    "before you finished the previous response, so that response was cut off. "
-    "Do not resume it unless asked - just handle what they say next.</interrupted>\n\n"
-)
-
 MAX_TOOL_ROUNDS = 6         # hard stop against a runaway tool-call loop
 BASH_TIMEOUT = 30
 READ_FILE_MAX_BYTES = 20_000  # spoken/streamed back, so keep it sane
@@ -140,7 +134,6 @@ class Dispatcher:
         self._lock = threading.Lock()
         self._gen = 0
         self._active_gen: int | None = None
-        self._interrupted_pending = False
         self._stream = None  # current openai stream, for abort-by-close
 
     def interrupt(self) -> bool:
@@ -149,7 +142,6 @@ class Dispatcher:
                 return False
             self._gen += 1
             self._active_gen = None
-            self._interrupted_pending = True
             stream = self._stream
             self._stream = None
         if stream is not None:
@@ -164,8 +156,6 @@ class Dispatcher:
         with self._lock:
             self._gen += 1
             gen = self._gen
-            tag = self._interrupted_pending
-            self._interrupted_pending = False
             still_running = self._active_gen is not None
             stream = self._stream
             self._stream = None
@@ -177,9 +167,6 @@ class Dispatcher:
                 except Exception:
                     pass
             self.on_event("interrupted", "")
-            tag = True
-        if tag:
-            text = INTERRUPT_NOTE + text
         threading.Thread(target=self._run, args=(text, gen), daemon=True).start()
 
     def _run(self, text: str, gen: int) -> None:
