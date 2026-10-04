@@ -23,7 +23,7 @@ Keywords: voice assistant, voice control for LLM agents, push-to-talk, offline s
 - Hold **F9**, speak, release. The utterance is transcribed offline with Phonon-2 (164 MB, English, ~10x realtime on a laptop CPU).
 - The text is dispatched to an OpenChamber session, or, in plain-chat mode, straight to an OpenAI-compatible server.
 - The answer streams into a glass panel at the top of the screen and stays until you press **Esc**. The panel is a real window, so it shows up in alt-tab.
-- Press F9 while the agent is answering and its turn is aborted server-side; your next command is tagged `<interrupted>` so the agent knows.
+- Press F9 while the agent is answering and its turn is aborted server-side; your next command is then sent normally, with no interruption note.
 - **Shift+Space** anywhere is system-wide dictation: it types what you say at the cursor.
 
 ## Requirements

@@ -107,16 +107,6 @@ class CommandBuffer:
         self.recent.clear()
 
 
-# Prepended to the next command when the user talked over a running answer.
-# The agent sees its own half-finished reply in history followed by this, so
-# it knows that turn was cut off rather than completed.
-INTERRUPT_NOTE = (
-    "<interrupted>The user pressed the talk key and started speaking again "
-    "before you finished the previous response, so that response was cut off. "
-    "Do not resume it unless asked - just handle what they say next.</interrupted>\n\n"
-)
-
-
 class Dispatcher:
     """Sends commands to OpenChamber on a worker thread.
 
@@ -124,9 +114,7 @@ class Dispatcher:
     them, the same way a chat thread would.
 
     Only one turn runs at a time. If a new command arrives while the agent is
-    still answering, the running turn is aborted (server-side + stream stops)
-    and the new command is tagged with an <interrupted> note so the agent
-    knows its last answer was cut off.
+    still answering, the running turn is aborted (server-side + stream stops).
     """
 
     def __init__(self, directory: str, provider_id: str = DEFAULT_PROVIDER,
@@ -152,9 +140,6 @@ class Dispatcher:
         # gen of the turn currently generating, or None when idle. Set by the
         # worker, cleared by the worker or by interrupt().
         self._active_gen: int | None = None
-        # interrupt() sets this so the next send() tags its command even
-        # though the turn is already marked dead.
-        self._interrupted_pending = False
 
     def _client(self):
         if self._oc is None:
@@ -175,7 +160,6 @@ class Dispatcher:
                 return False
             self._gen += 1              # supersede the running worker
             self._active_gen = None
-            self._interrupted_pending = True
             sid = self._session_id
         if sid and self._oc is not None:
             ok = self._oc.abort(sid)
@@ -198,20 +182,15 @@ class Dispatcher:
         with self._lock:
             self._gen += 1
             gen = self._gen
-            tag = self._interrupted_pending
-            self._interrupted_pending = False
             still_running = self._active_gen is not None
             sid = self._session_id
             self._active_gen = gen
         if still_running:
             # New command landed mid-answer without a prior interrupt()
-            # (e.g. toggle mode) - abort now and flag the follow-up.
+            # (e.g. toggle mode) - abort now.
             if sid and self._oc is not None:
                 self._oc.abort(sid)
             self.on_event("interrupted", "")
-            tag = True
-        if tag:
-            text = INTERRUPT_NOTE + text
         threading.Thread(target=self._run, args=(text, gen), daemon=True).start()
 
     def _run(self, text: str, gen: int) -> None:
