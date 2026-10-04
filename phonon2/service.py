@@ -4,9 +4,10 @@
   * unix socket (SOCK): other programs send 16 kHz mono float32 audio, get text back
     (see client.py) so they never load a model of their own
 """
-import os, socket, struct, subprocess, tempfile, threading
+import os, socket, struct, subprocess, tempfile, threading, time
 import numpy as np, sounddevice as sd, soundfile as sf
 from Xlib import X, XK, display as xdisplay
+from Xlib.error import ConnectionClosedError
 from fermion._speech import backends, fetch
 from fermion.transcribe import _resolve
 
@@ -71,61 +72,122 @@ def serve_socket():
 
 
 # ---------------------------------------------------------- hold-to-talk hotkey
-frames, stream = [], None
+# Nothing in here may kill the service: every failure is logged, the recording
+# state is reset, and the next Shift+Space works again.
+class Recording:
+    """One hold of the key. Owns its own frames, so a quick re-press cannot mix audio."""
+    def __init__(self):
+        self.frames = []
+        self.stream = sd.InputStream(samplerate=SR, channels=1, dtype="float32",
+                                     callback=lambda indata, n, t, st: self.frames.append(indata.copy()))
+        self.stream.start()
+
+    def finish(self):
+        try:
+            self.stream.stop(); self.stream.close()
+        except Exception as e:
+            print("stream close error:", e, flush=True)
+        return np.concatenate(self.frames)[:, 0] if self.frames else np.zeros(0, "float32")
+
+
+current = None
+
+
+def notify(msg):
+    subprocess.run(["notify-send", "-a", "phonon", "-t", "3000", "Dictation", msg],
+                   stderr=subprocess.DEVNULL, check=False)
 
 
 def start():
-    global stream, frames
-    frames = []
-    stream = sd.InputStream(samplerate=SR, channels=1, dtype="float32",
-                            callback=lambda indata, n, t, st: frames.append(indata.copy()))
-    stream.start()
+    global current
+    try:
+        current = Recording()
+    except Exception as e:  # device busy / unplugged / PortAudio stale: rescan devices and retry once
+        print("mic open failed, rescanning devices:", e, flush=True)
+        try:
+            sd._terminate(); sd._initialize()
+            current = Recording()
+        except Exception as e2:
+            current = None
+            print("mic open failed again:", e2, flush=True)
+            notify("microphone unavailable")
 
 
-def stop_and_type():
-    global stream
-    st, stream = stream, None
-    if st is None:
-        return
-    st.stop(); st.close()
-    audio = np.concatenate(frames)[:, 0] if frames else np.zeros(0, "float32")
-    if len(audio) < SR * MIN_SECONDS:
-        return  # a plain Shift+Space tap, not a dictation
-    text = transcribe(audio)
-    print(text, flush=True)
-    if text:
-        subprocess.run(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text + " "])
+def stop_and_type(rec):
+    try:
+        audio = rec.finish()
+        if len(audio) < SR * MIN_SECONDS:
+            return  # a plain Shift+Space tap, not a dictation
+        text = transcribe(audio)
+        print(text, flush=True)
+        if text:
+            subprocess.run(["xdotool", "type", "--clearmodifiers", "--delay", "1", "--", text + " "],
+                           timeout=60)
+    except Exception as e:
+        print("dictation error:", repr(e), flush=True)
+        notify("dictation failed, try again")
 
 
-def hotkey_loop():
-    d = xdisplay.Display()
-    root = d.screen().root
+def grab_keys(d):
     keycode = d.keysym_to_keycode(XK.XK_space)
     errors = []
     # grab with and without CapsLock (Lock) / NumLock (Mod2) so the combo works either way
     for extra in (0, X.LockMask, X.Mod2Mask, X.LockMask | X.Mod2Mask):
-        root.grab_key(keycode, X.ShiftMask | extra, True, X.GrabModeAsync, X.GrabModeAsync,
-                      onerror=lambda e, *a: errors.append(e))
+        d.screen().root.grab_key(keycode, X.ShiftMask | extra, True, X.GrabModeAsync, X.GrabModeAsync,
+                                 onerror=lambda e, *a: errors.append(e))
     d.sync()
-    if errors:
-        print("cannot grab Shift+Space: another app already owns it", flush=True)
-        os._exit(1)
-    print("ready: hold Shift+Space to talk, release to type", flush=True)
+    return keycode, errors
 
+
+def handle(d, keycode, ev):
+    global current
+    if ev.type not in (X.KeyPress, X.KeyRelease) or ev.detail != keycode:
+        return
+    if ev.type == X.KeyPress:
+        if current is None:  # auto-repeat presses arrive while recording: ignore
+            start()
+    elif current is not None:
+        # Holding the key makes X send fake release+press pairs (auto-repeat).
+        # Ask the server whether the key is really still down; only a real
+        # release ends the recording.
+        if d.query_keymap()[keycode // 8] & (1 << (keycode % 8)):
+            return
+        rec, current = current, None
+        threading.Thread(target=stop_and_type, args=(rec,), daemon=True).start()
+
+
+def hotkey_loop():
+    """Run forever. If the X connection drops (session reset, display restart) reconnect."""
+    global current
+    first = True
     while True:
-        ev = d.next_event()
-        if ev.type not in (X.KeyPress, X.KeyRelease) or ev.detail != keycode:
-            continue
-        if ev.type == X.KeyPress:
-            if stream is None:  # auto-repeat presses arrive while recording: ignore
-                start()
-        elif ev.type == X.KeyRelease:
-            # Holding the key makes X send fake release+press pairs (auto-repeat).
-            # Ask the server whether the key is really still down; only a real
-            # release ends the recording.
-            if d.query_keymap()[keycode // 8] & (1 << (keycode % 8)):
+        try:
+            d = xdisplay.Display()
+            keycode, errors = grab_keys(d)
+            if errors:
+                print("cannot grab Shift+Space: another app already owns it", flush=True)
+                if first:
+                    os._exit(1)
+                time.sleep(5)
                 continue
-            threading.Thread(target=stop_and_type, daemon=True).start()
+            first = False
+            print("ready: hold Shift+Space to talk, release to type", flush=True)
+            while True:
+                try:
+                    handle(d, keycode, d.next_event())
+                except (ConnectionClosedError, OSError, EOFError):
+                    raise
+                except Exception as e:  # a bad event must not stop the loop
+                    print("event error:", repr(e), flush=True)
+                    if current is not None:  # state may be inconsistent: drop the recording
+                        rec, current = current, None
+                        rec.finish()
+        except Exception as e:
+            print("X connection lost, reconnecting:", repr(e), flush=True)
+            if current is not None:
+                rec, current = current, None
+                rec.finish()
+            time.sleep(2)
 
 
 threading.Thread(target=serve_socket, daemon=True).start()
