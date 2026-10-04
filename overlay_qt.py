@@ -38,6 +38,7 @@ import socket
 import sys
 import threading
 
+from markdown_it import MarkdownIt
 from PyQt5.QtCore import (QEasingCurve, QPoint, QPropertyAnimation, QRect,
                           QRectF, Qt, QTimer, pyqtSignal)
 from PyQt5.QtGui import (QColor, QFont, QIcon, QPainter, QPixmap, QPen,
@@ -59,6 +60,15 @@ FADE_MS = 160
 # card with just a hint of the desktop bleeding through.
 PANEL_RGBA = (28, 28, 30, 248)
 BORDER_RGBA = (255, 255, 255, 30)
+
+
+_MD = MarkdownIt("commonmark", {"html": False}).enable(["table", "strikethrough"])
+
+
+def _md_html(text):
+    """Markdown -> HTML for QTextEdit (Qt ignores table CSS, so set attributes)."""
+    html = _MD.render(text)
+    return html.replace("<table>", '<table border="1" cellspacing="0" cellpadding="6">')
 
 
 class Viz(QWidget):
@@ -197,6 +207,11 @@ class Overlay(QWidget):
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }
         """)
+        self.output.document().setDefaultStyleSheet(
+            "code { font-family: monospace; background: #2a2a2a; }"
+            "pre { background: #2a2a2a; }"
+            "th { background: #2a2a2a; }"
+            "a { color: #7fb0ff; }")
         self.output.setVisible(False)
         lay.addWidget(self.output)
 
@@ -269,7 +284,7 @@ class Overlay(QWidget):
             self.status.setText("")
             self.heard.setText("")
             self.anim.stop()
-            self.output.setPlainText(text or "(no answer)")
+            self.output.setHtml(_md_html(text or "(no answer)"))
             self.output.moveCursor(QTextCursor.End)
             self._expand()
             self.hint.setVisible(False)
